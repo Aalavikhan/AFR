@@ -1,0 +1,39 @@
+# configs/baseline.yaml
+# ----------------------
+# BiomedCLIP Baseline — ROCO dataset
+# Tuned for RTX 5090 (32 GB VRAM)
+#
+# ALL paths are relative to your project root (afrnet\)
+# Run download script first:
+#   uv run python scripts\download_roco.py
+#
+# Then:
+#   uv run python train.py --smoke   ← verify pipeline (30 sec)
+#   uv run python train.py           ← full baseline run
+
+model:
+  name: biomedclip_baseline
+  # Local path to downloaded weights (set by scripts/download_roco.py)
+  # If this folder is missing, training will fall back to HuggingFace remote
+  local_dir: "models/biomedclip"
+  freeze_backbone: false
+
+data:
+  root: "data/roco"          # populated by scripts/download_roco.py
+  max_samples: null          # set to e.g. 500 for quick smoke tests
+
+training:
+  epochs: 10
+  batch_size: 128            # 32 GB VRAM handles 128 at bf16
+  lr: 1.0e-5
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_epochs: 1
+  eval_every_epochs: 1
+  num_workers: 8
+
+checkpoint_dir: "checkpoints"
+
+wandb:
+  enabled: false             # uv add wandb, then set true
+  project: "afrnet-baseline"
