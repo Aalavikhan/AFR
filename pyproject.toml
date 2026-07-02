@@ -5,9 +5,9 @@ description = "AFR-Net medical image-text retrieval"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "torch==2.7.0+cu128",
-    "torchvision==0.22.0+cu128",
-    "torchaudio==2.7.0+cu128",
+    "torch==2.5.1+cu121",
+    "torchvision==0.20.1+cu121",
+    "torchaudio==2.5.1+cu121",
     "open-clip-torch>=3.3.0",
     "transformers==4.40.0",
     "timm>=1.0.26",
@@ -25,8 +25,8 @@ dependencies = [
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
 explicit = true
 
 [[tool.uv.index]]
@@ -34,6 +34,6 @@ url = "https://pypi.org/simple"
 default = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128" }]
-torchvision = [{ index = "pytorch-cu128" }]
-torchaudio = [{ index = "pytorch-cu128" }]
+torch = [{ index = "pytorch-cu121" }]
+torchvision = [{ index = "pytorch-cu121" }]
+torchaudio = [{ index = "pytorch-cu121" }]
