@@ -6,6 +6,7 @@ Expected: Python 3.10 or higher
 
 import sys
 
+
 print("=" * 50)
 print("TEST 1: Python Version")
 print("=" * 50)
