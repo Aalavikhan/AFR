@@ -1,0 +1,46 @@
+# configs/afrnet_roco.yaml
+# -------------------------
+# Full AFR-Net (ROAM + GTGA + DDTP + OT-Align) on ROCO only.
+# No SkinCAP / HAM10000 / MIMIC — pure "prove the model works" config.
+#
+#   uv run python train_afrnet.py --smoke                 # 200-sample pipeline check
+#   uv run python train_afrnet.py --config configs/afrnet_roco.yaml
+#   uv run python train_afrnet.py --eval-only
+
+model:
+  name: afrnet
+  local_dir: "models/biomedclip"
+  freeze_backbone: true        # prove-it phase: train only AFR-Net modules
+  hidden_dim: 768
+  proj_dim: 512
+  keep_ratio: 0.5              # DDTP retains ceil(196*0.5)=98 patches
+  num_patches: 196
+
+data:
+  root: "data/roco"
+  # ---- SUBSET LEVER: start small to confirm the idea, then scale ----
+  max_samples: 2000            # train subset; set null for full ~60k
+  val_max_samples: 500         # val subset for fast, stable metrics
+
+training:
+  epochs: 15
+  batch_size: 64               # RTX 4090 24GB @ bf16. RTX 5090 32GB -> 128, accum 1
+  eval_batch_size: 128
+  grad_accum: 4                # effective 256 on 4090 (set 1 on 5090)
+  lr: 2.0e-5
+  weight_decay: 0.1
+  grad_clip: 1.0
+  warmup_epochs: 1
+  eval_every_epochs: 1
+  num_workers: 8
+
+loss:
+  ot_weight: 0.1
+  ot_warmup_steps: 300         # ~ first epoch on 2k subset; ramp OT in slowly
+  distill_weight: 0.1          # keep AFR-Net globals near frozen BiomedCLIP
+
+checkpoint_dir: "checkpoints_afrnet"
+
+wandb:
+  enabled: false
+  project: "afrnet-roco"

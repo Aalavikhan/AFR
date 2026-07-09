@@ -165,14 +165,25 @@ class BiomedCLIPBaseline(nn.Module):
 
     def get_word_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         """
-        PubMedBERT word tokens BEFORE global pooling.
-        Returns [B, 256, 768].
-        tokens : [B, 256] token IDs from self.tokenizer()
+        PubMedBERT word tokens BEFORE global pooling. Returns [B, 256, 768].
+
+        BiomedCLIP's text tower is an open_clip HFTextEncoder around HF PubMedBERT.
+        We call the wrapped HF transformer directly for the token-level hidden states.
         """
-        emb = self.model.text.token_embedding(tokens)
-        emb = emb + self.model.text.positional_embedding
-        out = self.model.text.transformer(emb.permute(1, 0, 2))
-        return out.permute(1, 0, 2)   # [B, 256, 768]
+        text = self.model.text
+        # pad id: PubMedBERT/BERT uses 0; fall back safely
+        pad_id = 0
+        cfg = getattr(text, "config", None)
+        if cfg is not None and getattr(cfg, "pad_token_id", None) is not None:
+            pad_id = cfg.pad_token_id
+
+        attn_mask = (tokens != pad_id).long()
+        out = text.transformer(input_ids=tokens, attention_mask=attn_mask)
+        # HF models return last_hidden_state; some open_clip wraps expose .last_hidden_state
+        hidden = getattr(out, "last_hidden_state", None)
+        if hidden is None:                      # tuple-style output fallback
+            hidden = out[0]
+        return hidden                           # [B, L, 768]
 
     # ------------------------------------------------------------------
     # Utilities
