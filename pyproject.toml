@@ -3,7 +3,7 @@ name = "afr"
 version = "0.1.0"
 description = "AFR-Net medical image-text retrieval"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "torch==2.5.1+cu121",
     "torchvision==0.20.1+cu121",
@@ -20,8 +20,11 @@ dependencies = [
     "pillow>=12.2.0",
     "tqdm>=4.67.3",
     "pyyaml>=6.0.3",
-    "datasets>=4.8.5",
     "wandb>=0.27.0",
+    "numpy<2",
+    "pyarrow>=15,<18",
+    "datasets>=2.19,<3",
+    "entmax"
 ]
 
 [[tool.uv.index]]

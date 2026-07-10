@@ -171,19 +171,16 @@ class BiomedCLIPBaseline(nn.Module):
         We call the wrapped HF transformer directly for the token-level hidden states.
         """
         text = self.model.text
-        # pad id: PubMedBERT/BERT uses 0; fall back safely
         pad_id = 0
         cfg = getattr(text, "config", None)
         if cfg is not None and getattr(cfg, "pad_token_id", None) is not None:
             pad_id = cfg.pad_token_id
-
         attn_mask = (tokens != pad_id).long()
         out = text.transformer(input_ids=tokens, attention_mask=attn_mask)
-        # HF models return last_hidden_state; some open_clip wraps expose .last_hidden_state
         hidden = getattr(out, "last_hidden_state", None)
-        if hidden is None:                      # tuple-style output fallback
+        if hidden is None:
             hidden = out[0]
-        return hidden                           # [B, L, 768]
+        return hidden                          # [B, L, 768]
 
     # ------------------------------------------------------------------
     # Utilities

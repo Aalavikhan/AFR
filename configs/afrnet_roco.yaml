@@ -32,7 +32,7 @@ training:
   grad_clip: 1.0
   warmup_epochs: 1
   eval_every_epochs: 1
-  num_workers: 8
+  num_workers: 0
 
 loss:
   ot_weight: 0.1
