@@ -60,6 +60,13 @@ class ROAMMed(nn.Module):
         self.iga_attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True)
         self.iga_norm = nn.LayerNorm(dim)
 
+        # LayerScale gates (near-identity init). At init the module is a
+        # near-passthrough so a warm-started backbone is not corrupted; training
+        # opens these gates only if the branch earns it. 1e-4 (not 0) so the
+        # sublayer weights still get a live gradient on the first step.
+        self.gamma_ifa = nn.Parameter(torch.full((dim,), 1e-4))
+        self.gamma_iga = nn.Parameter(torch.full((dim,), 1e-4))
+
     # ------------------------------------------------------------------
     @staticmethod
     def _derive_prior(V: torch.Tensor, v_cls: Optional[torch.Tensor]) -> torch.Tensor:
@@ -98,9 +105,10 @@ class ROAMMed(nn.Module):
             P_flat = P_seg.flatten(1) if P_seg.dim() == 3 else P_seg
         F_R = P_flat.unsqueeze(-1) * V_fused                         # [B, N, D]
 
-        # STEP 3 — IFA
+        # STEP 3 — IFA (LayerScale-gated residual; norm on the delta so that at
+        # init V_MR == V_fused exactly up to the tiny 1e-4 gate)
         ifa_out, _ = self.ifa_attn(V_fused, F_R, F_R, need_weights=False)
-        V_MR = self.ifa_norm(ifa_out + V_fused)                      # [B, N, D]
+        V_MR = V_fused + self.gamma_ifa * self.ifa_norm(ifa_out)     # [B, N, D]
         r_bar = F_R.mean(dim=1)                                      # [B, D]
         return V_MR, P_flat, r_bar
 
@@ -117,7 +125,7 @@ class ROAMMed(nn.Module):
         else:
             kv = self.region_protos.unsqueeze(0) + r_bar.unsqueeze(1)
         iga_out, _ = self.iga_attn(W, kv, kv, need_weights=False)
-        T_RG = self.iga_norm(iga_out + W)                            # [B, L, D]
+        T_RG = W + self.gamma_iga * self.iga_norm(iga_out)           # [B, L, D]
         return T_RG
 
     def forward(self, V, W, P_seg=None, V_multi=None, v_cls=None):

@@ -40,6 +40,12 @@ class GTGA(nn.Module):
         self.attn = nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True)
         self.attn_norm = nn.LayerNorm(dim)
 
+        # LayerScale gate (near-identity init). A single outer gate guarantees
+        # F_G == T_RG at init regardless of the internal sigmoid gate (which
+        # otherwise starts at ~0.5 and would halve the signal). 1e-4 so every
+        # internal parameter still receives a live gradient on the first step.
+        self.gamma_out = nn.Parameter(torch.full((dim,), 1e-4))
+
     def forward(
         self,
         T_RG: torch.Tensor,                              # [B, L, D]
@@ -48,7 +54,7 @@ class GTGA(nn.Module):
         x = T_RG.transpose(1, 2)                         # [B, D, L]
         span = self.dw3(x) + self.dw5(x)                 # [B, D, L]
         span = self.pw(span).transpose(1, 2)             # [B, L, D]
-        span = self.span_norm(span + T_RG)               # residual + norm
+        span = self.span_norm(span)                      # norm the conv features
 
         g = torch.sigmoid(self.gate(span))               # [B, L, D]
         gated = g * span                                 # phrase-gated tokens
@@ -57,5 +63,8 @@ class GTGA(nn.Module):
             gated, gated, gated,
             key_padding_mask=key_padding_mask, need_weights=False,
         )
-        F_G = self.attn_norm(attn_out + gated)           # [B, L, D]
+        delta = self.attn_norm(attn_out)                 # [B, L, D]
+
+        # One outer LayerScale-gated residual: F_G == T_RG at init (gamma~1e-4).
+        F_G = T_RG + self.gamma_out * delta
         return F_G

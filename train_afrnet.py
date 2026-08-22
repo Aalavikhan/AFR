@@ -75,6 +75,7 @@ def main():
         keep_ratio=config["model"].get("keep_ratio", 0.5),
         num_patches=config["model"].get("num_patches", 196),
         pad_token_id=0,
+        use_roam=config["model"].get("use_roam", True),
     )
 
     # --- data ---

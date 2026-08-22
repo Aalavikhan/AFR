@@ -57,7 +57,11 @@ class DDTP(nn.Module):
         self.agg_mlp = nn.Sequential(
             nn.Linear(dim, dim), nn.GELU(), nn.Linear(dim, dim)
         )
-        self.lam = nn.Parameter(torch.tensor(0.5))  # residual fusion weight
+        # Near-identity init: at start v_final == v_cls, so DDTP's refined global
+        # does not perturb the (warm-started) reference until training earns it.
+        # Note: v_final is only consumed on the coupled OT path; the retrieval
+        # metric does not use DDTP, so this does not affect eval at init.
+        self.lam = nn.Parameter(torch.tensor(1e-4))  # residual fusion weight
 
     @staticmethod
     def _minmax(x: torch.Tensor) -> torch.Tensor:

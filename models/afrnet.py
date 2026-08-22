@@ -43,15 +43,17 @@ class AFRNet(nn.Module):
     def __init__(
         self,
         backbone,
-        hidden_dim: int = 768,     # backbone token dim
-        proj_dim: int = 512,       # shared retrieval space
+        hidden_dim: int = 768,
+        proj_dim: int = 512,
         pad_token_id: int = 0,
         keep_ratio: float = 0.5,
         num_patches: int = 196,
+        use_roam: bool = True,
     ):
         super().__init__()
         self.backbone = backbone
         self.pad_token_id = pad_token_id
+        self.use_roam = use_roam
 
         self.roam = ROAMMed(dim=hidden_dim, num_heads=8)
         self.gtga = GTGA(dim=hidden_dim, num_heads=8)
@@ -59,8 +61,16 @@ class AFRNet(nn.Module):
         self.ot   = OTAlign(eps=0.05, n_iters=50)
 
         # projection heads into the shared retrieval space
-        self.img_proj = nn.Linear(hidden_dim, proj_dim)
-        self.txt_proj = nn.Linear(hidden_dim, proj_dim)
+        # Warm-startable heads matching BiomedCLIP's own projections (all bias-free).
+        # image head: single 768->512 (backbone visual.head.proj)
+        # text head : 768->640 -> GELU -> 640->512 (backbone text.proj)
+        self.img_proj = nn.Linear(hidden_dim, proj_dim, bias=False)
+        self.txt_proj = nn.Sequential(
+            nn.Linear(hidden_dim, 640, bias=False),
+            nn.GELU(),
+            nn.Linear(640, proj_dim, bias=False),
+        )
+        self._warm_start_projections()
 
     # ------------------------------------------------------------------
     # helpers
@@ -77,20 +87,44 @@ class AFRNet(nn.Module):
         """Masked mean over valid tokens -> [B, D]."""
         m = mask.unsqueeze(-1).float()
         return (F_G * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
+    
+    @torch.no_grad()
+    def _warm_start_projections(self):
+        """Copy BiomedCLIP's trained projections into the AFR-Net heads so the
+        model starts near the frozen baseline instead of from a random map.
+        Skips gracefully if the backbone doesn't expose real projections
+        (e.g. the MockBackbone used in tests)."""
+        try:
+            vis = self.backbone.model.visual
+            txt = self.backbone.model.text
+            src_img = vis.head.proj.weight
+            src_txt0 = txt.proj[0].weight
+            src_txt2 = txt.proj[2].weight
+        except (AttributeError, TypeError, IndexError):
+            print("[AFRNet] warm-start skipped (backbone has no BiomedCLIP projections)")
+            return
+        self.img_proj.weight.copy_(src_img)
+        self.txt_proj[0].weight.copy_(src_txt0)
+        self.txt_proj[2].weight.copy_(src_txt2)
+        print("[AFRNet] projection heads warm-started from BiomedCLIP")
+
 
     # ------------------------------------------------------------------
     # retrieval interface (decoupled)
     # ------------------------------------------------------------------
     def encode_image(self, images: torch.Tensor) -> torch.Tensor:
         V = self.backbone.get_patch_tokens(images)                  # [B, N, D]
-        V_MR, _, _ = self.roam.visual_branch(V)                     # text-free
+        if self.use_roam:
+            V_MR, _, _ = self.roam.visual_branch(V)                 # text-free
+        else:
+            V_MR = V                                                # ablation: skip ROAM
         g = self.img_proj(self._pool_visual(V_MR))
         return F.normalize(g, dim=-1)
 
     def encode_text(self, tokens: torch.Tensor) -> torch.Tensor:
         W = self.backbone.get_word_tokens(tokens)                   # [B, L, D]
         mask = self._text_mask(tokens)
-        T_RG = self.roam.text_branch(W, r_bar=None)                 # image-free (neutral protos)
+        T_RG = self.roam.text_branch(W, r_bar=None) if self.use_roam else W
         F_G = self.gtga(T_RG, key_padding_mask=~mask)
         g = self.txt_proj(self._pool_text(F_G, mask))
         return F.normalize(g, dim=-1)
