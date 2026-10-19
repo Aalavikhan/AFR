@@ -143,6 +143,11 @@ in the repo root and was read directly.
 | Objective | `models/modules/losses.py` | Eq (30)/(31) faithful; composition differs |
 | Composition | `models/afrnet.py` | frozen backbone + the four modules |
 
+**Handing this to another session (e.g. one with the segmentor)?** Point it at
+[docs/HANDOFF.md](docs/HANDOFF.md) first — it is the orientation brief: reading
+order, the exact segmentor hooks, the blockers, and the decisions that belong
+to the user.
+
 Read before touching any of it:
 [docs/DOVE_SPEC.md](docs/DOVE_SPEC.md) (verbatim equations) ·
 [docs/MODULE_SPEC.md](docs/MODULE_SPEC.md) (intended design) ·
