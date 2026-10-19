@@ -163,16 +163,57 @@ class BiomedCLIPBaseline(nn.Module):
         all_tokens = self.model.visual.trunk.forward_features(images)
         return all_tokens[:, 1:, :]   # drop CLS token at position 0
 
+    def pad_token_id(self) -> int:
+        """Padding id of the BiomedCLIP tokenizer.
+
+        Resolved from the tokenizer rather than assumed. The local
+        `tokenizer_config.json` declares `"pad_token": "[PAD]"` for a
+        `BertTokenizer`, which is id 0 in `vocab.txt`; the lookup below is
+        preferred so a tokenizer change cannot silently break masking.
+        """
+        tok = getattr(self.tokenizer, "tokenizer", self.tokenizer)  # HFTokenizer wraps it
+        for attr in ("pad_token_id", "pad_id"):
+            value = getattr(tok, attr, None)
+            if isinstance(value, int):
+                return value
+        return 0
+
+    def text_pad_mask(self, tokens: torch.Tensor) -> torch.Tensor:
+        """[B, L] token ids -> [B, L] bool mask, True where the token is real."""
+        return tokens != self.pad_token_id()
+
     def get_word_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         """
-        PubMedBERT word tokens BEFORE global pooling.
-        Returns [B, 256, 768].
-        tokens : [B, 256] token IDs from self.tokenizer()
+        PubMedBERT contextual word tokens BEFORE pooling/projection.
+        Returns [B, L, 768].
+        tokens : [B, L] token IDs from self.tokenizer()
+
+        NOTE (fix for docs/KNOWN_ISSUES.md AFR-009): the previous body called
+        `self.model.text.token_embedding` / `.positional_embedding` and treated
+        `self.model.text.transformer` as a seq-first open_clip TextTransformer.
+        BiomedCLIP's text tower is an open_clip `HFTextEncoder` wrapping a
+        HuggingFace BERT, so none of those attributes exist and the old code
+        raised AttributeError on first use. Checkpoint inspection confirms the
+        only `text.*` parameters are `text.transformer.*` (a batch-first BERT)
+        and `text.proj.*`. The correct call passes `input_ids` and an
+        `attention_mask` and reads `last_hidden_state`.
         """
-        emb = self.model.text.token_embedding(tokens)
-        emb = emb + self.model.text.positional_embedding
-        out = self.model.text.transformer(emb.permute(1, 0, 2))
-        return out.permute(1, 0, 2)   # [B, 256, 768]
+        attention_mask = self.text_pad_mask(tokens).to(tokens.device)
+        out = self.model.text.transformer(
+            input_ids=tokens,
+            attention_mask=attention_mask.long(),
+        )
+        hidden = getattr(out, "last_hidden_state", None)
+        if hidden is None:                      # tuple-style return
+            hidden = out[0]
+        return hidden                            # [B, L, 768]
+
+    def encode_word_tokens(self, tokens: torch.Tensor):
+        """Contextual text interface for the AFR-Net modules.
+
+        Returns `(features [B, L, 768], mask [B, L] bool)`.
+        """
+        return self.get_word_tokens(tokens), self.text_pad_mask(tokens)
 
     # ------------------------------------------------------------------
     # Utilities
@@ -183,6 +224,17 @@ class BiomedCLIPBaseline(nn.Module):
             if name != "logit_scale":
                 param.requires_grad_(False)
         print("[BiomedCLIPBaseline] Backbone frozen (logit_scale trainable only).")
+
+    def freeze_all(self):
+        """Freeze every backbone parameter, `logit_scale` included.
+
+        `freeze_backbone()` deliberately leaves `logit_scale` trainable, which
+        is right for CLIP fine-tuning. AFR-Net instead trains only its own
+        modules on top of a fully frozen backbone, so it uses this method.
+        """
+        for param in self.model.parameters():
+            param.requires_grad_(False)
+        print("[BiomedCLIPBaseline] Backbone fully frozen (incl. logit_scale).")
 
     def unfreeze_backbone(self):
         for param in self.model.parameters():

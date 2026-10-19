@@ -1,0 +1,110 @@
+# configs/afrnet.yaml
+# --------------------
+# AFR-Net: frozen BiomedCLIP + GTGA + DDTP + ROAM-Med + OT-Align.
+#
+# configs/baseline.yaml is left untouched so the baseline stays reproducible.
+# Every value below is a deliberate choice; provenance is marked:
+#   [PAPER]  taken from DOVE (IEEE TGRS 62, 2024) - see docs/DOVE_SPEC.md
+#   [CUSTOM] this project's design           - see docs/MODULE_SPEC.md
+#   [ADAPT]  adaptation to BiomedCLIP        - see docs/FIDELITY_AUDIT.md
+#
+# WARNING: nothing in this file has been executed. Hyperparameters are
+# starting points, not tuned values. See docs/EXPERIMENT_LOG.md.
+
+model:
+  name: afrnet
+  local_dir: "models/biomedclip"
+  # AFR-Net trains only its own modules; the backbone is fully frozen
+  # (logit_scale included) via BiomedCLIPBaseline.freeze_all().
+  freeze_backbone: true          # [CUSTOM] required by the architecture
+  dim: 768                       # [CUSTOM] ViT-B/16 + PubMedBERT token width
+  embed_dim: null                # null -> keep 768, no projection head
+
+gtga:                            # [CUSTOM] depthwise-conv text module
+  kernel_sizes: [3, 5]           # odd only; short + longer clinical phrases
+  # branch_mode decides WHAT the two branches differ by, i.e. what Eq (15)
+  # actually mines:
+  #   symmetric   - kernel WIDTH only (3 vs 5). Both branches see left AND
+  #                 right. This is NOT what DTGA mines, and the two branches
+  #                 overlap heavily, so the cross-mining may degenerate.
+  #   directional - branch A causal (sees tokens <= i), branch B anti-causal
+  #                 (sees tokens >= i). Matches the forward/backward GRU
+  #                 asymmetry of DOVE Eq (3)/(4) that DTGA exploits.
+  # RECOMMENDED: directional, with EQUAL kernels e.g. [5, 5] so direction is
+  # the only difference between branches. Left at 'symmetric' so the behaviour
+  # you already reviewed is unchanged until you choose. See FIDELITY_AUDIT.md
+  # MOD-GTGA-1.
+  branch_mode: symmetric         # 'symmetric' | 'directional'
+  probe_activation: sigmoid      # [INFERENCE] Eq (14) activation is unstated
+  use_eq8_gate: true             # DOVE Eq (8) gate form, applied to branches
+  use_gated_self_attention: false  # keep GTGA convolutional, per the design
+  dropout: 0.0
+
+ddtp:                            # [CUSTOM] text-conditioned patch selection
+  ratio: 0.5                     # 0.5 x 196 eligible patches -> 98 kept
+  num_keep: null                 # set an int to override ratio
+  tau: 0.07                      # temperature on the cosine relevance score
+  score_weighting: softmax_norm  # gradient path to the scorer; 'none' starves it
+
+roam:                            # DOVE Eq (17)-(28), inputs adapted
+  pyramid_scales: [1, 2, 3, 7]   # [ADAPT] Nm = 1+4+9+49 = 63 (MSV substitute)
+  prior_mode: multiply           # [CUSTOM] soft attention prior into Eq (19)
+  prior_normalise: true          # rescale prior to mean 1 over valid regions
+  use_region_prior: true
+  # iga_mode: 'batch' is FAITHFUL to Eq (26) but couples mini-batch members,
+  # so a sample's embedding depends on its batch-mates. 'diagonal' removes the
+  # coupling and is an ALGORITHMIC MODIFICATION (MOD-ROAM-1).
+  # Read docs/FIDELITY_AUDIT.md WARN-ROAM-1 before choosing.
+  iga_mode: batch
+
+ot_align:                        # [CUSTOM] no DOVE counterpart
+  enabled: true
+  source: regions                # 'regions' (DDTP output) or 'patches' (196)
+  eps: 0.05                      # entropic regularisation
+  max_iters: 100
+  tol: 1.0e-6
+  cost: cosine                   # C = 1 - cos(x, y)
+  detach_plan: true              # envelope gradient; cheaper and more stable
+
+loss:
+  # Primary objective is the EXISTING baseline loss, so baseline numbers stay
+  # comparable. 'triplet' switches to DOVE Eq (30) and must be reported.
+  primary: clip                  # 'clip' | 'triplet'
+  lambda_ot: 0.1                 # [CUSTOM] UNTUNED starting point
+  lambda_g: 0.0                  # DOVE Eq (31) constraint; 0 = disabled
+  margin: 0.2                    # [PAPER] alpha, DOVE §IV-B
+  max_violation: false           # [PAPER] Eq (30) is a sum over negatives
+  triplet_reduction: mean
+  # DOVE's lambda_g = 10.0 was tuned for its own architecture and loss scale.
+  # Do NOT transplant it: sweep it here before using a non-zero value.
+
+data:
+  root: "data/roco"
+  max_samples: null
+
+training:
+  epochs: 10
+  batch_size: 32                 # [ADAPT] NOT the paper's 100 and NOT the
+                                 # baseline's 128: measure what fits the real
+                                 # GPU first (docs/KNOWN_ISSUES.md AFR-005).
+  lr: 1.0e-4                     # only the modules train, so a higher LR than
+                                 # the baseline's 1e-5 is reasonable - UNTUNED
+  weight_decay: 0.01
+  grad_clip: 1.0
+  warmup_epochs: 1
+  eval_every_epochs: 1
+  num_workers: 4
+  seed: 1337                     # addresses AFR-010; set, logged, honoured
+
+checkpoint_dir: "checkpoints/afrnet"
+
+wandb:
+  enabled: false
+  project: "afrnet"
+
+# Segmentation is OPTIONAL and EXTERNAL. The segmentor is never built, called
+# or modified by this project. If you have its outputs, pass them to
+# AFRNet.forward(patch_mask=..., region_prior_external=...).
+# See docs/SEGMENTOR_INTEGRATION.md.
+segmentation:
+  enabled: false

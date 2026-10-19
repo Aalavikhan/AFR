@@ -21,3 +21,6 @@ wandb/
 .DS_Store
 .idea/
 .vscode/
+# Copyrighted paper — kept local, not redistributed.
+# Equations are transcribed in docs/DOVE_SPEC.md.
+*.pdf
